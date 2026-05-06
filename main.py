@@ -30,7 +30,7 @@ app.add_middleware(
 )
 
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
-HF_URL = "https://api-inference.huggingface.co/models/typeform/distilbert-base-uncased-mnli"
+HF_URL = "https://api-inference.huggingface.co/models/facebook/bart-large-mnli"
 LABELS   = [
     "Deep Work",
     "Procrastination",

@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 import os
+import asyncio  # ✅ added
 
 app = FastAPI(title="VibeCheck OS API", version="1.0.0")
 
@@ -53,6 +54,27 @@ def health():
     return {"healthy": True, "token_set": bool(HF_TOKEN)}
 
 
+# ✅ NEW: retry wrapper (only addition)
+async def call_hf(client, payload):
+    for attempt in range(3):
+        resp = await client.post(
+            HF_URL,
+            headers={"Authorization": f"Bearer {HF_TOKEN}"},
+            json=payload,
+        )
+
+        if resp.status_code == 200:
+            return resp
+
+        if resp.status_code in [503, 500]:
+            await asyncio.sleep(5)
+            continue
+
+        return resp
+
+    return resp
+
+
 @app.post("/classify")
 async def classify(body: TextInput):
     if not body.text.strip():
@@ -61,24 +83,23 @@ async def classify(body: TextInput):
         raise HTTPException(status_code=500, detail="HF_TOKEN not set on server")
 
     async with httpx.AsyncClient(timeout=25) as client:
-        resp = await client.post(
-            HF_URL,
-            headers={"Authorization": f"Bearer {HF_TOKEN}"},
-            json={
-                "inputs": body.text.strip()[:500],
-                "parameters": {
-                    "candidate_labels": LABELS,
-                    "multi_label": False,
-                },
+        # ✅ replaced direct call with retry wrapper
+        resp = await call_hf(client, {
+            "inputs": body.text.strip()[:500],
+            "parameters": {
+                "candidate_labels": LABELS,
+                "multi_label": False,
             },
-        )
+        })
 
     if resp.status_code == 503:
         raise HTTPException(status_code=503, detail="Model loading on HF, retry in ~20s")
     if resp.status_code == 429:
         raise HTTPException(status_code=429, detail="HF rate limit hit")
     if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"HF returned {resp.status_code}: {resp.text[:200]}")
+        # ✅ improved logging (only change)
+        print("HF ERROR:", resp.status_code, resp.text)
+        raise HTTPException(status_code=502, detail="Upstream ML API failed")
 
     data = resp.json()
     result = data[0] if isinstance(data, list) else data
